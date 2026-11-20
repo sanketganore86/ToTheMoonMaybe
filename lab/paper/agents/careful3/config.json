@@ -1,0 +1,6 @@
+{"decision": "watch_then_scan", "version": "v3", "effective": "2026-10-28", "team": "notes-v1",
+ "decide_at": "09:45", "last_entry": "15:30", "min_bars": 15, "entry_rule": "careful",
+ "limit_ttl_min": 15, "min_room_pct": 0.01, "min_p_touch_up1": 0.35, "max_positions": 2, "entry_limit_offset": 0.0005,
+ "max_stop_pct": 0.0075, "risk_per_trade": 0.005, "max_position_frac": 0.4, "max_total_frac": 0.8, "target_pct": 0.01,
+ "avoid_after_stop_min": 60, "heed_partner_weak": false,
+ "log_earnings_reaction": true}

@@ -1,0 +1,7 @@
+{"decision": "open_then_scan", "version": "v2", "effective": "2026-10-28", "team": "notes-v1",
+ "rank_by": "sigma", "open_positions": 2, "max_positions": 3, "invest_fraction": 1.0,
+ "target_pct": 0.039, "stop_pct": 0.039,
+ "decide_at": "09:45", "last_entry": "15:30", "min_bars": 15, "entry_rule": "momentum",
+ "entry_limit_offset": 0.0005, "limit_ttl_min": 15,
+ "avoid_after_stop_min": 60, "heed_partner_weak": true,
+ "skip_earnings_reaction_open": true, "rule_from": "2026-10-29"}

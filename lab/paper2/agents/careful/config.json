@@ -1,0 +1,5 @@
+{"decision": "checkpoints", "version": "v3", "effective": "2026-11-16",
+ "checkpoints": ["10:15", "11:00", "12:00", "13:00", "14:00"], "grace_min": 20, "min_bars": 30,
+ "entry_rule": "careful", "max_orders_per_day": 2,
+ "min_room_pct": 0.01, "min_p_touch_up1": 0.35, "entry_limit_offset": 0.0005,
+ "max_stop_pct": 0.0075, "risk_per_trade": 0.005, "max_position_frac": 0.4, "max_total_frac": 0.8, "target_pct": 0.01}

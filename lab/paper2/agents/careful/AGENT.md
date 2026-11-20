@@ -1,0 +1,3 @@
+# careful v3 (season 2, from 2026-11-16)
+
+careful v2 with decisions at fixed checkpoints instead of every minute, so Alpaca can follow them live: at 10:15, 11:00, 12:00, 13:00 and 14:00 ET it checks its unchanged entry rule (above today's open, VWAP and yesterday's close; at least 1% of forecast range left; P(touch +1%) at least 35%) on bars before that minute, and places a limit buy at the last price +0.05%, cancelled at the next checkpoint if unfilled. Target +1%, stop at the higher of today's low and -0.75%, sized so a stop loses at most 0.5% of the account (40% per stock, 80% total); at most 2 filled trades a day; flat by 15:55 ET. Universe: all 13 forecast stocks minus `../../exclusions.csv`. Full rules: `../../README.md`. Fixed for the season.

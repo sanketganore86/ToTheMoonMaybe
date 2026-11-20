@@ -1,0 +1,25 @@
+# Re-creatable from the machine-wide cache (~/.cache/market-hypothesis-lab): never commit data or outputs
+lab/**/data/
+lab/**/results/
+lab/**/charts/
+lab/_logs/
+**/_debug_results/
+# live records stay out of this repo
+lab/external/
+lab/live/
+lab/**/broker/
+lab/paper*/agents/*/journal/
+lab/paper*/agents/*/orders/
+lab/paper*/agents/*/fills/
+lab/paper*/agents/*/equity.csv
+lab/paper*/agents/*/state.json
+lab/forecast/predictions/
+lab/forecast/daily/
+lab/forecast/scorecard.csv
+# secrets and local files
+.env
+*.pem
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

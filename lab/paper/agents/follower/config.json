@@ -1,0 +1,2 @@
+{"decision": "external_calls", "calls_file": "lab/external/calls.csv", "per_call_frac": 0.02, "take_profit_mult": 2.0,
+ "retired_from": "2026-10-21"}
