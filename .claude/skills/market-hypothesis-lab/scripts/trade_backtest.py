@@ -78,12 +78,14 @@ class Market:
         self.iv = op.atm_iv_series(df).bfill().to_numpy(float)
 
 
-def run_trade(m, i, inst, params, ex, stock_cost):
+def run_trade(m, i, inst, params, ex, stock_cost, *, end=None):
     """Open at session i's open (signal was at i-1's close). Returns (exit_idx, ret, reason)."""
     alloc = params.get("allocation", 1.0)
     tp, sl, maxd = ex["take_profit"] / alloc, ex["stop_loss"] / alloc, ex["max_days"]  # on position capital
-    n = len(m.c)
+    n = len(m.c) if end is None else end
     j, ret, why = _run(m, i, inst, params, tp, sl, maxd, n, stock_cost)
+    if n < len(m.c) and (why == "end" or (why == "time" and j - i + 1 < maxd)):
+        return j, ret * alloc, "split"
     return j, ret * alloc, why  # account return
 
 
@@ -131,12 +133,13 @@ def _run(m, i, inst, params, tp, sl, maxd, n, stock_cost):
 
 
 def simulate(m, sig, lo, hi, inst, params, ex, stock_cost):
-    """Walk signal days in [lo, hi); one position at a time."""
+    """Walk entries and exits in [lo, hi), omitting trades still open at an internal cutoff."""
     trades, i = [], lo
     while i < hi:
         if sig[i - 1] and i < len(m.c) - 1:
-            j, ret, why = run_trade(m, i, inst, params, ex, stock_cost)
-            trades.append((m.dates[i], m.dates[j], j - i + 1, ret, why))
+            j, ret, why = run_trade(m, i, inst, params, ex, stock_cost, end=hi)
+            if why != "split":
+                trades.append((m.dates[i], m.dates[j], j - i + 1, ret, why))
             i = j + 1
         else:
             i += 1
@@ -198,7 +201,7 @@ def main():
         cut = start + int((len(df) - start) * a.split)
         t_is = simulate(m, sig, start, cut, inst, params, ex, stock_cost).assign(ticker=tk)
         t_oos = simulate(m, sig, cut, len(df), inst, params, ex, stock_cost).assign(ticker=tk)
-        books.append(dict(tk=tk, df=df, m=m, start=start, cut=cut, t_is=t_is, t_oos=t_oos))
+        books.append(dict(tk=tk, df=df, m=m, sig=sig, start=start, cut=cut, t_is=t_is, t_oos=t_oos))
 
     yrs_is = sum((b["df"].index[b["cut"] - 1] - b["df"].index[b["start"]]).days for b in books) / 365.25 / len(books)
     yrs_oos = sum((b["df"].index[-1] - b["df"].index[b["cut"]]).days for b in books) / 365.25 / len(books)
@@ -256,7 +259,10 @@ def main():
     res["verdict"] = "SUPPORTED" if all(checks.values()) else "REJECTED"
     res["survives_multiple_testing"] = res["verdict"] == "SUPPORTED" and p <= res["bonferroni_alpha"]
     # capital protection (separate from the pre-registered edge verdict; full history)
-    res["protection"] = protect.assess_trades(pd.concat([t_is, t_oos], ignore_index=True),
+    res["protection"] = protect.assess_trades(pd.concat([
+        simulate(b["m"], b["sig"], b["start"], len(b["df"]), inst, params, ex, stock_cost)
+        for b in books
+    ], ignore_index=True),
                                               params.get("allocation", 1.0), H.get("protection"))
     res["usable"] = res["verdict"] == "SUPPORTED" and res["protection"]["verdict"] != "FAIL"
 
