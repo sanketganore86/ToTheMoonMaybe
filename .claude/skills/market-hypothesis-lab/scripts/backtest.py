@@ -17,7 +17,7 @@ A hypothesis file defines:
     }
     def signal(df: pd.DataFrame) -> pd.Series:
         # target position in [-1, 1] decided at the CLOSE of each day, using data up to
-        # and including that day only. The engine holds it during the NEXT day.
+        # and including that day only. The engine fills it at the next session's open.
 
 The verdict is decided on the out-of-sample period only.
 """
@@ -79,14 +79,28 @@ def lookahead_check(mod, df, full_sig, n=8, seed=0):
     return bad
 
 
-def permutation_p(held, ret, cost, actual, n, seed=1):
+def position_returns(df, signal, cost, start=None):
+    """Index each open-to-open return by the session where the position was filled."""
+    held = signal.shift(1).fillna(0).iloc[:-1]
+    ret = df["Open"].pct_change(fill_method=None).iloc[1:].set_axis(held.index)
+    if start is not None:
+        held = held.loc[pd.Timestamp(start):]
+        ret = ret.reindex(held.index)
+    fees = held.diff().abs().fillna(held.abs()) * cost
+    return ret, held, fees
+
+
+def permutation_p(held, ret, fees, actual, n, seed=1):
     """Null: same positions (same exposure/turnover) but timing randomised by circular shift."""
     rng = np.random.default_rng(seed)
     h, r = held.to_numpy(), ret.to_numpy()
-    c = (np.abs(np.diff(h, prepend=h[0])) * cost)
+    c = fees.to_numpy()
+    if len(h) < 2:
+        return 1.0
+    min_shift = min(20, (len(h) - 1) // 2 or 1)
     beats = 0
     for _ in range(n):
-        k = rng.integers(20, len(h) - 20)
+        k = rng.integers(min_shift, max(min_shift + 1, len(h) - min_shift))
         net = np.roll(h, k) * r - np.roll(c, k)
         sd = net.std(ddof=1)
         if sd > 0 and net.mean() / sd * np.sqrt(ANN) >= actual:
@@ -118,10 +132,9 @@ def main():
     sig = pd.Series(mod.signal(df.copy()), index=df.index).astype(float).fillna(0).clip(-1, 1)
     leaks = lookahead_check(mod, df, sig)
 
-    ret = df["Close"].pct_change().fillna(0)
-    held = sig.shift(1).fillna(0)
     cost = a.cost_bps / 1e4
-    net = held * ret - held.diff().abs().fillna(held.abs()) * cost
+    ret, held, fees = position_returns(df, sig, cost, H.get("start"))
+    net = held * ret - fees
     if a.protection_only:
         rp = lab / "results" / f"{hid}.json"
         old = json.loads(rp.read_text())
@@ -130,25 +143,25 @@ def main():
         print(f"{hid}: protection {old['protection']['verdict']}, safe exposure {old['protection']['safe_exposure']:.0%}")
         return
 
-    # optional evaluation window: signals are computed on full history (warm-up), but the
-    # 70/30 split and all metrics use only dates where the hypothesis' data exists
-    if H.get("start"):
-        keep = df.index >= pd.Timestamp(H["start"])
-        df, sig, ret, held, net = df[keep], sig[keep], ret[keep], held[keep], net[keep]
-        held.iloc[0] = 0.0  # no free entry on day one of the window
-    cut = df.index[int(len(df) * a.split)]
-    seg = {"in_sample": df.index < cut, "out_of_sample": df.index >= cut}
+    # Choose the split from bar dates, excluding the interval ending at the first
+    # holdout open from both verdict windows.
+    dates = df.loc[pd.Timestamp(H["start"]):].index if H.get("start") else df.index
+    cut_index = int(len(dates) * a.split)
+    if not 2 <= cut_index < len(dates) - 1:
+        ap.error("split must leave at least one complete open-to-open interval on each side")
+    cut = dates[cut_index]
+    seg = {"in_sample": ret.index < dates[cut_index - 1], "out_of_sample": ret.index >= cut}
     res = {"id": hid, "ticker": ticker, "statement": H["statement"], "rationale": H.get("rationale", ""),
-           "criteria": crit, "cost_bps": a.cost_bps, "split_date": str(cut.date()),
+           "criteria": crit, "cost_bps": a.cost_bps, "split_date": str(cut.date()), "fill_model": "next_open",
            "lookahead_violations": leaks, "tested_at": datetime.now().isoformat(timespec="seconds")}
     for name, m in seg.items():
-        res[name] = {"period": f"{df.index[m][0].date()} -> {df.index[m][-1].date()}",
+        res[name] = {"period": f"{ret.index[m][0].date()} -> {ret.index[m][-1].date()}",
                      "strategy": stats(net[m], held[m]),
                      "buy_hold": stats(ret[m], pd.Series(1.0, index=ret[m].index))}
 
     oos = res["out_of_sample"]
     m = seg["out_of_sample"]
-    p = permutation_p(held[m], ret[m], cost, oos["strategy"]["sharpe"], a.perms)
+    p = permutation_p(held[m], ret[m], fees[m], oos["strategy"]["sharpe"], a.perms)
     oos["p_value_timing"] = p
 
     # multiple-testing bookkeeping: every recorded test spends some of the alpha budget
@@ -198,7 +211,7 @@ def main():
                 f"exposure {s['exposure']:.0%} | position changes {s['trades']}")
 
     lines = [f"## {hid} — {res['verdict']}",
-             f"*{ticker}, tested {res['tested_at']}, costs {a.cost_bps:g} bps, split {res['split_date']}*", "",
+             f"*{ticker}, tested {res['tested_at']}, next-open fills, costs {a.cost_bps:g} bps, split {res['split_date']}*", "",
              f"**Hypothesis:** {H['statement']}", f"**Rationale:** {H.get('rationale','')}", "",
              f"- In-sample  strategy: {fmt(res['in_sample']['strategy'])}",
              f"- In-sample  buy&hold: {fmt(res['in_sample']['buy_hold'])}",

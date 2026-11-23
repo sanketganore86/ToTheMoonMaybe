@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from backtest import load_module, stats  # noqa: E402
+from backtest import load_module, position_returns, stats  # noqa: E402
 
 
 def main():
@@ -40,22 +40,20 @@ def main():
     cut = win.index[int(len(win) * a.split)]
     df = full[full.index < cut]  # the signal never even sees OOS rows
     sig = pd.Series(mod.signal(df.copy()), index=df.index).astype(float).fillna(0).clip(-1, 1)
-    if start:  # warm-up before the window, evaluation inside it
-        keep = df.index >= pd.Timestamp(start)
-        df, sig = df[keep], sig[keep]
-    ret = df["Close"].pct_change().fillna(0)
-    held = sig.shift(1).fillna(0)
-    net = held * ret - held.diff().abs().fillna(held.abs()) * a.cost_bps / 1e4
-
-    mid = len(df) // 2
+    ret, held, fees = position_returns(df, sig, a.cost_bps / 1e4, start)
+    net = held * ret - fees
+    mid = len(ret) // 2
+    if mid < 2:
+        ap.error("screen needs at least one complete open-to-open interval per half")
+    halves = (slice(0, mid - 1), slice(mid, len(ret)))
     verdicts = []
-    print(f"SCREEN {Path(a.hypothesis).stem} [{ticker}] in-sample only, costs {a.cost_bps:g} bps")
-    for name, sl in (("half 1", slice(0, mid)), ("half 2", slice(mid, len(df)))):
+    print(f"SCREEN {Path(a.hypothesis).stem} [{ticker}] in-sample only, next-open fills, costs {a.cost_bps:g} bps")
+    for name, sl in zip(("half 1", "half 2"), halves):
         s, b = stats(net.iloc[sl], held.iloc[sl]), stats(ret.iloc[sl], pd.Series(1.0, index=ret.iloc[sl].index))
         better_sharpe = s["sharpe"] > b["sharpe"]
         better_dd = s["max_drawdown"] > b["max_drawdown"]
         verdicts.append((better_sharpe, better_dd))
-        print(f"  {name} {df.index[sl][0].date()}..{df.index[sl][-1].date()}: strategy Sharpe {s['sharpe']:+.2f} "
+        print(f"  {name} {ret.index[sl][0].date()}..{ret.index[sl][-1].date()}: strategy Sharpe {s['sharpe']:+.2f} "
               f"MaxDD {s['max_drawdown']:.0%} expo {s['exposure']:.0%} changes {s['trades']} | "
               f"buy&hold Sharpe {b['sharpe']:+.2f} MaxDD {b['max_drawdown']:.0%}")
     crit = mod.HYPOTHESIS.get("pass_criteria", {})
@@ -64,7 +62,7 @@ def main():
     ok = all((not want_sharpe or s_) and (not want_dd or d_) for s_, d_ in verdicts)
     if not want_sharpe and not want_dd:
         # standalone signal: both halves profitable AND the weaker half at least half as good
-        sh = [stats(net.iloc[sl], held.iloc[sl])["sharpe"] for sl in (slice(0, mid), slice(mid, len(df)))]
+        sh = [stats(net.iloc[sl], held.iloc[sl])["sharpe"] for sl in halves]
         ok = min(sh) > 0 and min(sh) >= 0.5 * max(sh)
     print("  =>", "PASSES screen: worth one out-of-sample test" if ok else
           "FAILS screen: unstable in-sample. Do not test; note it in the journal as screened out.")
@@ -93,12 +91,15 @@ def screen_trades(mod, a):
         m = tb.Market(df, tlab)
         sig = pd.Series(mod.entries(df.copy()), index=df.index).fillna(False).astype(bool).to_numpy()
         mid = start + (cut - start) // 2
-        for name, lo, hi in (("half 1", start, mid), ("half 2", mid, cut - 1)):
+        for name, lo, hi in (("half 1", start, mid), ("half 2", mid, cut)):
             t = tb.simulate(m, sig, lo, hi, inst, params, ex, 5e-4)
             halves[name][0].extend(t.ret.tolist())
             if len(t):
-                picks = rng.choice(np.arange(lo, hi - 1), size=min(150, hi - lo - 1), replace=False)
-                base = np.mean([tb.run_trade(m, int(i), inst, params, ex, 5e-4)[1] for i in picks])
+                candidates = np.arange(lo, min(hi, len(df) - 1))
+                picks = rng.choice(candidates, size=min(150, len(candidates)), replace=False)
+                random_trades = [tb.run_trade(m, int(i), inst, params, ex, 5e-4, end=hi) for i in picks]
+                returns = [ret for _, ret, reason in random_trades if reason != "split"]
+                base = np.mean(returns) if returns else np.nan
                 halves[name][1].extend([base] * len(t))  # ticker's average random trade, weighted by its trade count
     ok = True
     for name, (rets, base) in halves.items():
